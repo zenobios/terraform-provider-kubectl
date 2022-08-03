@@ -4,16 +4,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"sort"
+	"time"
+
 	"github.com/gavinbunney/terraform-provider-kubectl/flatten"
 	"github.com/gavinbunney/terraform-provider-kubectl/yaml"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"io/ioutil"
 	"k8s.io/cli-runtime/pkg/printers"
 	"k8s.io/kubectl/pkg/validation"
-	"os"
-	"sort"
-	"time"
 
 	"log"
 	"strings"
@@ -47,6 +48,7 @@ func resourceKubectlManifest() *schema.Resource {
 
 	return &schema.Resource{
 		CreateContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+			log.Printf("[TRACE] In CreateContext")
 			exponentialBackoffConfig := backoff.NewExponentialBackOff()
 			exponentialBackoffConfig.InitialInterval = 3 * time.Second
 			exponentialBackoffConfig.MaxInterval = 30 * time.Second
@@ -76,6 +78,7 @@ func resourceKubectlManifest() *schema.Resource {
 			}
 		},
 		ReadContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+			log.Printf("[TRACE] In ReadContext")
 			if err := resourceKubectlManifestRead(ctx, d, meta); err != nil {
 				return diag.FromErr(err)
 			}
@@ -83,6 +86,7 @@ func resourceKubectlManifest() *schema.Resource {
 			return nil
 		},
 		DeleteContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+			log.Printf("[TRACE] In DeleteContext")
 			if err := resourceKubectlManifestDelete(ctx, d, meta); err != nil {
 				return diag.FromErr(err)
 			}
@@ -90,6 +94,7 @@ func resourceKubectlManifest() *schema.Resource {
 			return nil
 		},
 		UpdateContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+			log.Printf("[TRACE] In UpdateContext")
 			exponentialBackoffConfig := backoff.NewExponentialBackOff()
 			exponentialBackoffConfig.InitialInterval = 3 * time.Second
 			exponentialBackoffConfig.MaxInterval = 30 * time.Second
@@ -122,6 +127,7 @@ func resourceKubectlManifest() *schema.Resource {
 		},
 		Importer: &schema.ResourceImporter{
 			StateContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+				log.Printf("[TRACE] In StateContext")
 				idParts := strings.Split(d.Id(), "//")
 				if len(idParts) != 3 && len(idParts) != 4 {
 					return []*schema.ResourceData{}, fmt.Errorf("expected ID in format apiVersion//kind//name//namespace, received: %s", d.Id())
@@ -215,20 +221,26 @@ metadata:
 
 			// trigger a recreation if the yaml-body has any pending changes
 			if d.Get("force_new").(bool) {
+				log.Printf("[TRACE] force_new")
 				_ = d.ForceNew("yaml_body")
 			}
 
 			if !d.NewValueKnown("yaml_body") {
 				log.Printf("[TRACE] yaml_body value interpolated, skipping customized diff")
+				log.Printf("[TRACE] yaml_body_parsed before: %v", d.Get("yaml_body_parsed"))
+				d.SetNewComputed("yaml_body_parsed")
+				log.Printf("[TRACE] yaml_body_parsed after: %v", d.Get("yaml_body_parsed"))
 				return nil
 			}
 
+			log.Printf("Parsing yaml_body")
 			parsedYaml, err := yaml.ParseYAML(d.Get("yaml_body").(string))
 			if err != nil {
 				return err
 			}
 
 			if overrideNamespace, ok := d.GetOk("override_namespace"); ok {
+				log.Printf("[TRACE] override_namespace")
 				parsedYaml.SetNamespace(overrideNamespace.(string))
 			}
 
@@ -242,11 +254,13 @@ metadata:
 			// this allows us to show a nice diff to the users with specific fields obfuscated, whilst storing the
 			// real value to apply in yaml_body
 			obfuscatedYaml, _ := yaml.ParseYAML(d.Get("yaml_body").(string))
+
 			if obfuscatedYaml.Raw.Object == nil {
 				obfuscatedYaml.Raw.Object = make(map[string]interface{})
 			}
 
 			if overrideNamespace, ok := d.GetOk("override_namespace"); ok {
+				log.Printf("[TRACE] override_namespace 2")
 				obfuscatedYaml.SetNamespace(overrideNamespace.(string))
 			}
 
@@ -259,6 +273,7 @@ metadata:
 			}
 
 			for _, s := range sensitiveFields {
+				log.Printf("[TRACE] splitting sensitive fields")
 				fields := strings.Split(s, ".")
 				_, fieldExists, err := meta_v1_unstruct.NestedFieldNoCopy(obfuscatedYaml.Raw.Object, fields...)
 				if fieldExists {
@@ -270,6 +285,8 @@ metadata:
 					log.Printf("[TRACE] sensitive field %s skipped does not exist", s)
 				}
 			}
+
+			log.Printf("[TRACE] %s Unstructed YAML after splitting: %+v\n", obfuscatedYaml, obfuscatedYaml.Raw.UnstructuredContent())
 
 			obfuscatedYamlBytes, obfuscatedYamlBytesErr := yamlWriter.Marshal(obfuscatedYaml.Raw.Object)
 			if obfuscatedYamlBytesErr != nil {
@@ -294,12 +311,15 @@ metadata:
 
 			// Check that the fields specified in our YAML for diff against cluster representation
 			stateYaml := d.Get("yaml_incluster").(string)
+			log.Printf("[TRACE] yaml_incluster: %v", stateYaml)
 			liveStateYaml := d.Get("live_manifest_incluster").(string)
+			log.Printf("[TRACE] liveStateYaml: %v", liveStateYaml)
 			if stateYaml != liveStateYaml {
 				log.Printf("[TRACE] DETECTED YAML STATE %s vs %s", stateYaml, liveStateYaml)
 				_ = d.SetNewComputed("yaml_incluster")
 			}
 
+			log.Printf("[TRACE] Finished CustomizeDiff")
 			return nil
 		},
 		Schema:        kubectlManifestSchema,
@@ -309,6 +329,7 @@ metadata:
 				Version: 0,
 				Type:    resourceKubectlManifestV0().CoreConfigSchema().ImpliedType(),
 				Upgrade: func(ctx context.Context, rawState map[string]interface{}, meta interface{}) (map[string]interface{}, error) {
+					log.Printf("[TRACE] In StateUpgrade")
 					rawState["yaml_incluster"] = getFingerprint(rawState["yaml_incluster"].(string))
 					rawState["live_manifest_incluster"] = getFingerprint(rawState["live_manifest_incluster"].(string))
 					return rawState, nil
@@ -554,6 +575,7 @@ func resourceKubectlManifestApply(ctx context.Context, d *schema.ResourceData, m
 }
 
 func resourceKubectlManifestRead(ctx context.Context, d *schema.ResourceData, meta interface{}) error {
+	log.Printf(("[TRACE] In resourceKubectlManifestRead"))
 	yamlBody := d.Get("yaml_body").(string)
 	manifest, err := yaml.ParseYAML(yamlBody)
 	if err != nil {
@@ -583,6 +605,7 @@ func resourceKubectlManifestRead(ctx context.Context, d *schema.ResourceData, me
 func resourceKubectlManifestReadUsingClient(ctx context.Context, d *schema.ResourceData, meta interface{}, client dynamic.ResourceInterface, manifest *yaml.Manifest) error {
 
 	log.Printf("[DEBUG] %v fetch from kubernetes", manifest)
+	log.Printf("[FooBar] resourceData before: %v", d)
 
 	// Get the resource from Kubernetes
 	metaObjLiveRaw, err := client.Get(ctx, manifest.GetName(), meta_v1.GetOptions{})
@@ -608,6 +631,9 @@ func resourceKubectlManifestReadUsingClient(ctx context.Context, d *schema.Resou
 
 	liveManifestFingerprint := getLiveManifestFingerprint(d, manifest, metaObjLive)
 	_ = d.Set("live_manifest_incluster", liveManifestFingerprint)
+
+	log.Printf("[TRACE] resourceData after: %v", d)
+	log.Printf("[TRACE] Finished resourceKubectlManifestReadUsingClient")
 
 	return nil
 }
