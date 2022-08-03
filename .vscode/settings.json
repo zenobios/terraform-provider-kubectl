@@ -1,0 +1,10 @@
+{
+    "makefile.extensionOutputFolder": "./.vscode",
+    "go.testFlags": [
+        "-v"
+    ],
+    "go.testTimeout": "120m",
+    "go.testEnvVars": {
+        "TF_ACC" : "1"
+    }
+}
