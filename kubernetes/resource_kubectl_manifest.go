@@ -227,9 +227,11 @@ metadata:
 
 			if !d.NewValueKnown("yaml_body") {
 				log.Printf("[TRACE] yaml_body value interpolated, skipping customized diff")
+				log.Printf("[TRACE] clearing yaml_body_parsed, yaml_incluster")
 				log.Printf("[TRACE] yaml_body_parsed before: %v", d.Get("yaml_body_parsed"))
+				log.Printf("[TRACE] yaml_incluster before: %v", d.Get("yaml_incluster"))
 				d.SetNewComputed("yaml_body_parsed")
-				log.Printf("[TRACE] yaml_body_parsed after: %v", d.Get("yaml_body_parsed"))
+				d.SetNewComputed("yaml_incluster")
 				return nil
 			}
 
